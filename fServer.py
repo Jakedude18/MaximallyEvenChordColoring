@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory
-import proto
+import chordColorer
 import os
 
 app = Flask(__name__)
@@ -18,7 +18,7 @@ def compute_chord():
 
     # Call proto.py with proper parameters
     try:
-        coloring, evennessScore = proto.maximizeColoring(baseChord, mode, onsets)
+        coloring, evennessScore = chordColorer.maximizeColoring(baseChord, mode, onsets)
         if coloring is None:
             coloring = []
     except Exception as e:
