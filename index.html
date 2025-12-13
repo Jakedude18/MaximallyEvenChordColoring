@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Maximally Even Chord Colorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{ --panel-w: 780px; }
+  body { font-family: Inter, Arial, sans-serif; margin: 18px; color: #222; position: relative; min-height: 100vh; }
+  h1 { margin: 4px 0 12px; }
+  .row { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; }
+  .panel { border:1px solid #e3e3e3; padding:12px; border-radius:8px; width:var(--panel-w); box-shadow: 0 1px 3px rgba(0,0,0,0.03); background:#fff; position:relative; }
+  .small { width:360px; }
+  label { font-weight:600; display:block; margin-bottom:6px; }
+  select, button { padding:8px 10px; }
+  button { cursor:pointer; }
+  /* Piano keyboard */
+  .piano-container { position:relative; width:280px; height:160px; user-select:none; }
+  .white-keys { display:flex; height:160px; }
+  .white-key { width:40px; height:160px; border:1px solid #333; background:#fff; box-sizing:border-box; position:relative; }
+  .white-key.selected { background:#ccc; }
+  .black-keys { position:absolute; top:0; left:0; height:100px; width:100%; pointer-events:none; }
+  .black-key { position:absolute; width:28px; height:100px; background:#000; z-index:10; pointer-events:auto; border-radius:3px; }
+  .black-key.selected { background:#444; }
+  /* Circle canvas */
+  #circleCanvas { border:1px solid #ddd; background:#fff; border-radius:6px; }
+  pre { background:#fafafa; padding:8px; border-radius:6px; }
+  .controls { display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+  .hint { color:#666; font-size:13px; }
+  footer { margin-top:14px; color:#666; font-size:13px; }
+  .blurb { position:fixed; bottom:12px; right:12px; max-width:280px; font-size:13px; color:#666; }
+  @media (max-width:920px){
+    :root{ --panel-w: 100%; }
+    .row{ flex-direction:column; }
+  }
+</style>
+</head>
+<body>
+<h1>Even Chord Generator</h1>
+
+<div class="row">
+  <div class="panel small">
+    <label>1) Select Base Chord (keyboard)</label>
+    <div class="piano-container" id="basePiano">
+      <div class="white-keys" id="baseWhiteKeys"></div>
+      <div class="black-keys" id="baseBlackKeys"></div>
+    </div>
+    <div class="hint">Click keys to toggle base chord notes.</div>
+  </div>
+
+  <div class="panel small">
+    <label>2) Select Mode (keyboard)</label>
+    <div class="piano-container" id="modePiano">
+      <div class="white-keys" id="modeWhiteKeys"></div>
+      <div class="black-keys" id="modeBlackKeys"></div>
+    </div>
+    <div class="hint">Click keys to toggle mode notes.</div>
+  </div>
+
+  <div class="panel small">
+    <label>3) Number of onsets</label>
+    <select id="onsetCount">
+      <option>3</option><option>4</option><option>5</option><option selected>6</option>
+      <option>7</option><option>8</option><option>9</option><option>10</option>
+      <option>11</option><option>12</option>
+    </select>
+
+    <div style="margin-top:12px;">
+      <button onclick="computeChord()">Compute Maximally Even Chord</button>
+      <button onclick="demoExample()">Demo Example</button>
+    </div>
+
+    <div style="margin-top:12px">
+      <label>Mode (readout)</label>
+      <pre id="modeOut">[]</pre>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="align-items:flex-start;">
+  <canvas id="circleCanvas" width="520" height="520"></canvas>
+
+  <div style="max-width:220px;">
+    <h3>Results</h3>
+    <div><b>Final coloring (PCs):</b></div>
+    <pre id="finalPCs">—</pre>
+    <div><b>Readable:</b></div>
+    <pre id="finalNames">—</pre>
+    <div style="margin-top:8px;"><b>Evenness:</b> <span id="evennessOut">—</span></div>
+  </div>
+</div>
+
+<div class="blurb">
+  Musicians often refer to adding notes to a chord as coloring. The problem of coloring a chord as evenly as possible from a mode (set of notes) while using a base set of notes is solved using dynamic programming. We assign each vertex from the normal polygon to a note in the coloring, and try to minimize this distance.
+</div>
+
+<footer>
+  Tip: Click demo to load a quick example (base C & G, Ionian mode, 3 onsets).
+</footer>
+
+<script>
+// === Utilities ===
+function pcToNameSharp(pc){ const map=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]; return map[((pc%12)+12)%12]; }
+
+// === Piano keyboard builder ===
+const whitePCs = [0,2,4,5,7,9,11];
+const blackPositions = [{pc:1,left:30},{pc:3,left:70},{pc:6,left:150},{pc:8,left:190},{pc:10,left:230}];
+
+function buildKeyboard(containerWhite, containerBlack, keySet){
+  whitePCs.forEach(pc=>{
+    const key = document.createElement("div"); key.className="white-key"; key.dataset.pc=pc; key.title=pcToNameSharp(pc);
+    key.addEventListener("click", ev=>{
+      ev.stopPropagation();
+      if(keySet.has(pc)){ keySet.delete(pc); key.classList.remove("selected"); }
+      else { keySet.add(pc); key.classList.add("selected"); }
+    });
+    containerWhite.appendChild(key);
+  });
+  blackPositions.forEach(obj=>{
+    const k = document.createElement("div"); k.className="black-key"; k.style.left=obj.left+"px"; k.dataset.pc=obj.pc; k.title=pcToNameSharp(obj.pc);
+    k.addEventListener("click", ev=>{
+      ev.stopPropagation();
+      if(keySet.has(obj.pc)){ keySet.delete(obj.pc); k.classList.remove("selected"); }
+      else { keySet.add(obj.pc); k.classList.add("selected"); }
+    });
+    containerBlack.appendChild(k);
+  });
+}
+
+// Track selections
+const baseSet = new Set();
+const modeSet = new Set();
+
+buildKeyboard(document.getElementById("baseWhiteKeys"), document.getElementById("baseBlackKeys"), baseSet);
+buildKeyboard(document.getElementById("modeWhiteKeys"), document.getElementById("modeBlackKeys"), modeSet);
+
+// === Canvas drawing ===
+const canvas = document.getElementById("circleCanvas");
+const ctx = canvas.getContext("2d");
+const W = canvas.width,H=canvas.height,cx=W/2,cy=H/2,R=Math.min(W,H)/2-90;
+
+function angleForPcFraction(fracPc){ return (fracPc/12)*(2*Math.PI)-Math.PI/2; }
+
+function drawBaseCircle(){
+  ctx.clearRect(0,0,W,H);
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,2*Math.PI); ctx.strokeStyle="#ddd"; ctx.lineWidth=1.5; ctx.stroke();
+  for(let pc=0; pc<12; pc++){
+    const a=angleForPcFraction(pc),x1=cx+(R-8)*Math.cos(a),y1=cy+(R-8)*Math.sin(a),x2=cx+(R+8)*Math.cos(a),y2=cy+(R+8)*Math.sin(a);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.strokeStyle="#eee"; ctx.stroke();
+    const tx=cx+(R+26)*Math.cos(a),ty=cy+(R+26)*Math.sin(a)+4; ctx.fillStyle="#333"; ctx.font="12px Arial"; ctx.fillText(pcToNameSharp(pc),tx-10,ty);
+  }
+}
+
+function drawNormalPolygon(onsets){
+  const pts=[]; for(let k=0;k<onsets;k++){ const frac=k*(12/onsets),a=angleForPcFraction(frac); pts.push({x:cx+R*Math.cos(a),y:cy+R*Math.sin(a)});}
+  ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y); ctx.closePath();
+  ctx.fillStyle="rgba(180,180,180,0.06)"; ctx.strokeStyle="rgba(120,120,120,0.45)"; ctx.lineWidth=1.6; ctx.fill(); ctx.stroke();
+  pts.forEach(p=>{ctx.beginPath(); ctx.fillStyle="rgba(120,120,120,0.6)"; ctx.arc(p.x,p.y,4,0,2*Math.PI); ctx.fill();});
+}
+
+function drawChordPolygon(pcs){
+  if(!pcs||pcs.length===0) return;
+  const pts=pcs.map(p=>{ const a=angleForPcFraction(p); return {pc:p,x:cx+R*Math.cos(a),y:cy+R*Math.sin(a),a}; }).sort((A,B)=>A.a-B.a);
+  ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y); ctx.closePath();
+  ctx.fillStyle="rgba(200,40,40,0.12)"; ctx.strokeStyle="rgba(200,40,40,0.95)"; ctx.lineWidth=3; ctx.fill(); ctx.stroke();
+  pts.forEach(p=>{ ctx.beginPath(); ctx.fillStyle="rgba(200,40,40,1)"; ctx.arc(p.x,p.y,7,0,2*Math.PI); ctx.fill(); ctx.fillStyle="#fff"; ctx.font="11px Arial"; ctx.fillText(String(p.pc),p.x-6,p.y+4); });
+}
+
+// === Chord computation ===
+function roundToMode(index, modeArr){
+  if(!modeArr||modeArr.length===0) return ((Math.round(index)%12)+12)%12;
+  let best=modeArr[0],bestD=Math.abs(modeArr[0]-index);
+  for(let i=1;i<modeArr.length;i++){ const d=Math.abs(modeArr[i]-index); if(d<bestD){bestD=d;best=modeArr[i];} }
+  return (Math.round(best)+12)%12;
+}
+
+function chordEvenessJS(coloring,pulses,normalInterval){ let sum=0; const n=coloring.length; for(let i=0;i<n;i++) sum+=Math.abs(coloring[i]-i*normalInterval); return sum; }
+
+function colorChordJS(vertices, base, coloring, modeArr, pulses, normalInterval){
+  if(!coloring) coloring=[]; if(vertices.length===0) return coloring.slice();
+  const base_copy=base.slice(); const vertices_copy=vertices.slice();
+  const closestIndex=roundToMode(vertices_copy.shift(),modeArr);
+  const closestColoring=coloring.concat([closestIndex]);
+  if(base.length===0) return colorChordJS(vertices_copy,base.slice(),closestColoring,modeArr,pulses,normalInterval);
+  const baseColoring=coloring.concat([base_copy.shift()]);
+  if(base[0]<=closestIndex) return colorChordJS(vertices_copy,base_copy,baseColoring,modeArr,pulses,normalInterval);
+  const bc=colorChordJS(vertices_copy,base_copy,baseColoring,modeArr,pulses,normalInterval);
+  const cc=colorChordJS(vertices_copy,base.slice(),closestColoring,modeArr,pulses,normalInterval);
+  if(chordEvenessJS(bc,pulses,normalInterval)<chordEvenessJS(cc,pulses,normalInterval)) return bc; else return cc;
+}
+
+function maximizeColoringJS(baseChordPCs, modePCs, onsets){
+  const pulses=12,normalInterval=pulses/onsets;
+  const vertices=[]; for(let i=0;i<onsets;i++) vertices.push(i*normalInterval);
+  const base=baseChordPCs.slice().sort((a,b)=>a-b);
+  return colorChordJS(vertices,base,[],modePCs.slice(),pulses,normalInterval);
+}
+
+// === Read selections ===
+function readBaseChord(){ return [...baseSet]; }
+function readMode(){ return [...modeSet]; }
+
+// === Compute chord ===
+function computeChord(){
+  const base=readBaseChord(); const mode=readMode();
+  const onsets=Number(document.getElementById("onsetCount").value)||6;
+  fetch("/compute_chord",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({baseChord:base,mode:mode,onsets:onsets})})
+  .then(resp=>resp.json()).then(data=>{
+    if(data.error){ alert("Server error: "+data.error); return; }
+    const final=data.bestColoring||[],evenness=data.maxEvenness??0;
+    document.getElementById("finalPCs").textContent="["+final.join(",")+"]";
+    document.getElementById("finalNames").textContent="["+final.map(pcToNameSharp).join(",")+"]";
+    document.getElementById("evennessOut").textContent=evenness.toFixed(4);
+    drawBaseCircle(); drawNormalPolygon(onsets); drawChordPolygon(final);
+  }).catch(err=>{alert("Fetch error: "+err);});
+}
+
+// === Demo example ===
+function demoExample(){
+  baseSet.clear(); modeSet.clear();
+  [0,7].forEach(pc=>baseSet.add(pc));
+  [0,2,4,5,7,9,11].forEach(pc=>modeSet.add(pc));
+  document.querySelectorAll('#basePiano .white-key, #basePiano .black-key').forEach(k=>k.classList.remove('selected'));
+  document.querySelectorAll('#modePiano .white-key, #modePiano .black-key').forEach(k=>k.classList.remove('selected'));
+  document.querySelectorAll('#basePiano .white-key, #basePiano .black-key').forEach(k=>{ if(baseSet.has(Number(k.dataset.pc))) k.classList.add('selected'); });
+  document.querySelectorAll('#modePiano .white-key, #modePiano .black-key').forEach(k=>{ if(modeSet.has(Number(k.dataset.pc))) k.classList.add('selected'); });
+  updateModeOut(); document.getElementById("onsetCount").value="3"; computeChord();
+}
+
+function updateModeOut(){
+  const arr=[...modeSet].sort((a,b)=>a-b);
+  document.getElementById("modeOut").textContent="["+arr.join(",")+"]";
+}
+
+// === Init ===
+drawBaseCircle();
+</script>
+</body>
+</html>
